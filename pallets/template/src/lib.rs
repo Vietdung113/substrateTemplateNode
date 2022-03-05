@@ -33,10 +33,10 @@ pub mod pallet {
 	// The pallet's runtime storage items.
 	// https://docs.substrate.io/v3/runtime/storage
 	#[pallet::storage]
-	#[pallet::getter(fn something)]
+	#[pallet::getter(fn current_state)]
 	// Learn more about declaring storage items:
 	// https://docs.substrate.io/v3/runtime/storage#declaring-storage-items
-	pub type Something<T> = StorageValue<_, u32>;
+	pub type AccountToBalance<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, u32, ValueQuery>;
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/v3/runtime/events-and-errors
@@ -45,7 +45,10 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		/// Event documentation should end with an array that provides descriptive names for event
 		/// parameters. [something, who]
-		SomethingStored(u32, T::AccountId),
+		// StateChanged(u32, T::AccountId),
+        AccountCreated(T::AccountId),
+        AccountExists(T::AccountId),
+        TransferredCash(T::AccountId, u32, T::AccountId, u32, u32),
 	}
 
 	// Errors inform users that something went wrong.
@@ -65,38 +68,69 @@ pub mod pallet {
 		/// An example dispatchable that takes a singles value as a parameter, writes the value to
 		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
-		pub fn do_something(origin: OriginFor<T>, something: u32) -> DispatchResult {
+        pub fn register(origin: OriginFor<T>) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+
+            if <AccountToBalance<T>>::try_get(&who).is_err() {
+                // Initialize 10 dollars
+                <AccountToBalance<T>>::insert(&who, 10);
+                Self::deposit_event(Event::AccountCreated(who));
+            } else {
+                Self::deposit_event(Event::AccountExists(who));
+            }
+            Ok(())
+        }
+
+		#[pallet::weight(10_000 + T::DbWeight::get().writes(1))]
+		pub fn transfer_money(origin: OriginFor<T>, to: T::AccountId, amount: u32) -> DispatchResult {
 			// Check that the extrinsic was signed and get the signer.
 			// This function will return an error if the extrinsic is not signed.
 			// https://docs.substrate.io/v3/runtime/origins
 			let who = ensure_signed(origin)?;
 
-			// Update storage.
-			<Something<T>>::put(something);
+            let whoBalance: Result<u32, ()> = <AccountToBalance<T>>::try_get(&who);
+            assert!(whoBalance.is_ok(), "Sender does not have account");
+            assert!(whoBalance.ok().unwrap() >= amount, "Sender does not have enough money");
 
-			// Emit an event.
-			Self::deposit_event(Event::SomethingStored(something, who));
-			// Return a successful DispatchResultWithPostInfo
+            let toBalance: Result<u32, ()> = <AccountToBalance<T>>::try_get(&who);
+            assert!(toBalance.is_ok(), "Receiver does not have account");
+
+            <AccountToBalance<T>>::try_mutate(&who, |maybe_value| {
+                *maybe_value = *maybe_value - amount;
+                let x: Result<u32, ()> = Ok(*maybe_value);
+                x
+            });
+            <AccountToBalance<T>>::try_mutate(&to, |maybe_value| {
+                *maybe_value = *maybe_value + amount;
+                let x: Result<u32, ()> = Ok(*maybe_value);
+                x
+            });
+
+            let finalWhoBalance = <AccountToBalance<T>>::try_get(&who).ok().unwrap();
+            let finalToBalance = <AccountToBalance<T>>::try_get(&to).ok().unwrap();
+            Self::deposit_event(Event::TransferredCash(
+                who, finalWhoBalance, to, finalToBalance, amount
+            ));
 			Ok(())
 		}
 
-		/// An example dispatchable that may throw a custom error.
-		#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1))]
-		pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
+		///// An example dispatchable that may throw a custom error.
+		//#[pallet::weight(10_000 + T::DbWeight::get().reads_writes(1,1))]
+		//pub fn cause_error(origin: OriginFor<T>) -> DispatchResult {
+		//	let _who = ensure_signed(origin)?;
 
-			// Read a value from storage.
-			match <Something<T>>::get() {
-				// Return an error if the value has not been set.
-				None => Err(Error::<T>::NoneValue)?,
-				Some(old) => {
-					// Increment the value read from storage; will error in the event of overflow.
-					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
-					// Update the value in storage with the incremented result.
-					<Something<T>>::put(new);
-					Ok(())
-				},
-			}
-		}
+		//	// Read a value from storage.
+		//	//match <State<T>>::get() {
+		//	//	// Return an error if the value has not been set.
+		//	//	None => Err(Error::<T>::NoneValue)?,
+		//	//	Some(old) => {
+		//	//		// Increment the value read from storage; will error in the event of overflow.
+		//	//		let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
+		//	//		// Update the value in storage with the incremented result.
+		//	//		<State<T>>::put(new);
+		//	//		Ok(())
+		//	//	},
+		//	//}
+		//}
 	}
 }
